@@ -40,15 +40,25 @@ class BlocklistName: Hashable, CustomStringConvertible, ContentBlocker {
         return self == .ad ? adVersion : nil
     }()
     
-    static func blocklists(forDomain domain: Domain) -> (on: Set<BlocklistName>, off: Set<BlocklistName>) {
+    static func blocklists(forDomain domain: Domain, locale: String? = Locale.current.languageCode) -> (on: Set<BlocklistName>, off: Set<BlocklistName>) {
         if domain.shield_allOff == 1 {
-            return ([], allLists)
+            var offList = allLists
+            // Make sure to consider the regional list which needs to be disabled as well
+            if let locale = locale, let regionalBlocker = ContentBlockerRegion.with(localeCode: locale) {
+                offList.insert(regionalBlocker)
+            }
+            return ([], offList)
         }
         
         var onList = Set<BlocklistName>()
         
         if domain.isShieldExpected(.AdblockAndTp) {
             onList.formUnion([.ad, .tracker])
+            
+            if Preferences.Shields.useRegionAdBlock.value, let locale = locale,
+                let regionalBlocker = ContentBlockerRegion.with(localeCode: locale) {
+                onList.insert(regionalBlocker)
+            }
         }
         
         // For lists not implemented, always return exclude from `onList` to prevent accidental execution
@@ -56,10 +66,17 @@ class BlocklistName: Hashable, CustomStringConvertible, ContentBlocker {
         // TODO #159: Setup image shield
         
         if domain.isShieldExpected(.HTTPSE) {
-            onList.formUnion([.https])
+            onList.insert(.https)
         }
         
-        return (onList, allLists.subtracting(onList))
+        var offList = allLists.subtracting(onList)
+        // Make sure to consider the regional list since the user may disable it globally
+        if let locale = locale, let regionalBlocker = ContentBlockerRegion.with(localeCode: locale),
+            !onList.contains(regionalBlocker) {
+            offList.insert(regionalBlocker)
+        }
+        
+        return (onList, offList)
     }
     
     static func compileAll(ruleStore: WKContentRuleListStore) -> Deferred<Void> {
