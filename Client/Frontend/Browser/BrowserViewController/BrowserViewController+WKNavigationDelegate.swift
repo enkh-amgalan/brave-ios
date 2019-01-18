@@ -21,6 +21,14 @@ extension WKNavigationAction {
     }
 }
 
+extension URL {
+    /// Obtain a schemeless absolute string
+    fileprivate var schemelessAbsoluteString: String {
+        guard let scheme = self.scheme else { return absoluteString }
+        return absoluteString.replacingOccurrences(of: "\(scheme)://", with: "")
+    }
+}
+
 extension BrowserViewController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         if tabManager.selectedTab?.webView !== webView {
@@ -149,14 +157,6 @@ extension BrowserViewController: WKNavigationDelegate {
             pendingRequests[url.absoluteString] = navigationAction.request
             
             if let urlHost = url.normalizedHost {
-                // If an upgraded https load happens with a host which was upgraded, increase the stats
-                if url.scheme == "https", let _ = pendingHTTPUpgrades.removeValue(forKey: urlHost) {
-                    BraveGlobalShieldStats.shared.httpse += 1
-                    if let stats = self.tabManager[webView]?.contentBlocker.stats {
-                        self.tabManager[webView]?.contentBlocker.stats = stats.create(byAddingListItem: .https)
-                    }
-                }
-                
                 if let mainDocumentURL = navigationAction.request.mainDocumentURL, url.scheme == "http" {
                     let domainForShields = Domain.getOrCreateForUrl(mainDocumentURL, context: DataController.viewContext)
                     if domainForShields.isShieldExpected(.HTTPSE) && HttpsEverywhereStats.shared.shouldUpgrade(url) {
@@ -177,7 +177,7 @@ extension BrowserViewController: WKNavigationDelegate {
             // request then the page is reloaded with a proper url and adblocking rules are applied.
             if
                 let mainDocumentURL = navigationAction.request.mainDocumentURL,
-                mainDocumentURL == url,
+                mainDocumentURL.schemelessAbsoluteString == url.schemelessAbsoluteString,
                 !url.isSessionRestoreURL,
                 navigationAction.sourceFrame.isMainFrame || navigationAction.targetFrame?.isMainFrame == true {
                 
@@ -221,6 +221,16 @@ extension BrowserViewController: WKNavigationDelegate {
         var request: URLRequest?
         if let url = responseURL {
             request = pendingRequests.removeValue(forKey: url.absoluteString)
+        }
+        
+        if let url = responseURL, let urlHost = responseURL?.normalizedHost {
+            // If an upgraded https load happens with a host which was upgraded, increase the stats
+            if url.scheme == "https", let _ = pendingHTTPUpgrades.removeValue(forKey: urlHost) {
+                BraveGlobalShieldStats.shared.httpse += 1
+                if let stats = self.tabManager[webView]?.contentBlocker.stats {
+                    self.tabManager[webView]?.contentBlocker.stats = stats.create(byAddingListItem: .https)
+                }
+            }
         }
 
         // We can only show this content in the web view if this URL is not pending
